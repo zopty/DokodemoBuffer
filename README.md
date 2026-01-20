@@ -1,8 +1,10 @@
+![dokodemo_buffer_thumb_anim](https://github.com/user-attachments/assets/36e6e39f-fb6c-41f5-9ca3-b2e8b4ee0a9a)
+
 # どこでもバッファ
 
 レイヤー間で映像を送受信できるカスタムオブジェクトを追加します
 
-beta28aにて動作確認済
+beta29にて動作確認済
 
 # 導入手順
 
