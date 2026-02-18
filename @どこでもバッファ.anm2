@@ -1,0 +1,150 @@
+@入出力
+--filter
+--label:どこでもバッファ
+--string@_id:ID,
+--select@io:動作モード,入力=0,出力=1
+--track@_alpha:透明度,0.0,100.0,0.0,0.01
+--select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
+--group:debug
+--string@src:src,
+--string@dst:dst,
+
+--[[pixelshader@psmain:
+Texture2D src : register(t0);
+
+cbuffer constant : register(b0)
+{
+    float alpha;
+}
+
+float4 psmain (float4 pos : SV_Position) : SV_Target
+{
+    return src[pos.xy] * float4(1.0, 1.0, 1.0, 1 - alpha);
+}
+]]
+
+local blends = {
+    "draw",
+    "mask",
+    "copy",
+    "add"
+}
+
+local blend = blends[bmode]
+
+local alpha = _alpha / 100
+
+local id = _id ~= "" and _id or obj.id
+local cache = "cache:dkdm_" .. id
+obj.clearbuffer(cache, obj.screen_w, obj.screen_h)
+
+dkdm = dkdm or {}
+dkdm[id] = dkdm[id] or {}
+
+if src ~= "" and dst ~= "" then
+    obj.pixelshader(
+        "psmain",
+        dst,
+        src,
+        {
+            alpha
+        },
+        blend
+    )
+elseif io == 1 and dkdm and dkdm[id] and dkdm[id].data then
+    obj.putpixeldata(cache, dkdm[id].data, dkdm[id].w, dkdm[id].h)
+    obj.pixelshader(
+        "psmain",
+        "object",
+        cache,
+        {
+            alpha
+        },
+        blend
+    )
+elseif dkdm and dkdm[id] then
+    obj.pixelshader(
+        "psmain",
+        cache,
+        "object",
+        {
+            alpha
+        },
+        blend
+    )
+    dkdm[id].data, dkdm[id].w, dkdm[id].h = obj.getpixeldata(cache)
+end
+
+@遅延
+--filter
+--label:どこでもバッファ
+--track@num_frames:遅延,1,600,1,1
+--track@alpha:透明度,0.0,100.0,0.0,0.01
+--select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
+--string@id:ID,
+
+local blends = {
+    "draw",
+    "mask",
+    "copy",
+    "add"
+}
+
+local blend = blends[bmode]
+
+dkdm_d = dkdm_d or {}
+
+local uid = "d_" .. (id ~= "" and ("i_" .. id) or (obj.id .. "_" .. obj.effect_id))
+local cache_d = "cache:dkdm_" .. uid
+
+dkdm_d[uid] = dkdm_d[uid] or {ptr=1,bufs={}}
+for i = 1, num_frames do
+    dkdm_d[uid].bufs[i] = dkdm_d[uid].bufs[i] or {}
+end
+
+local ptr = dkdm_d[uid].ptr + 1
+if ptr > num_frames then
+    ptr = 1
+end
+dkdm_d[uid].ptr = ptr
+
+obj.effect("入出力@どこでもバッファ", "ID", uid, "合成モード", blend, "透明度", alpha, "src", "object", "dst", cache_d)
+
+dkdm_d[uid].bufs[ptr].data, dkdm_d[uid].bufs[ptr].w, dkdm_d[uid].bufs[ptr].h = obj.getpixeldata(cache_d)
+
+obj.copybuffer("tempbuffer", "object")
+
+local read_ptr = (ptr + 1) % num_frames + 1
+
+local buf = dkdm_d[uid].bufs[read_ptr]
+if buf.data then
+    obj.putpixeldata(cache_d, buf.data, buf.w, buf.h)
+    obj.effect("入出力@どこでもバッファ", "ID", "", "合成モード", blend, "透明度", alpha, "src", cache_d, "dst", "object")
+end
+
+obj.effect("入出力@どこでもバッファ", "ID", "", "合成モード", blend, "透明度", alpha, "src", "tempbuffer", "dst", "object")
+
+@残像
+--filter
+--label:どこでもバッファ
+--track@interval:遅延,1,600,1,1
+--track@alpha:透明度,0.0,100.0,0.0,0.01
+--track@count:残像数,1,100,1,1
+--select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
+
+local blends = {
+    "draw",
+    "mask",
+    "copy",
+    "add"
+}
+
+local blend = blends[bmode]
+
+obj.copybuffer("tempbuffer", "object")
+
+for i = count, 1, -1 do
+    obj.effect("遅延@どこでもバッファ", "遅延", interval, "合成モード", blend, "透明度", alpha, "ID", i)
+end
+
+obj.effect("入出力@どこでもバッファ", "ID", "", "合成モード", blend, "透明度", alpha, "src", "tempbuffer", "dst", "object")
