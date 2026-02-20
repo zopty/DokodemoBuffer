@@ -22,6 +22,7 @@ cbuffer constant : register(b0)
     float aspect;
     float w;
     float h;
+    float scale;
     float ox;
     float oy;
 }
@@ -31,24 +32,25 @@ float4 psmain (float4 pos : SV_Position) : SV_Target
     float2 screenSize = float2(w, h);
 
     float2 uv = pos.xy - float2(ox, oy);
-    uv /= screenSize;
 
-    uv -= 0.5;
+    uv -= screenSize / 2;
+
+    uv *= scale;
 
     if (aspect > 0)
     {
-        uv.x /= (1.0 - aspect);
+        uv /= float2(1.0 - aspect, 1.0);
     }
     else if (aspect < 0)
     {
-        uv.y /= (1.0 + aspect);
+        uv /= float2(1.0, 1.0 + aspect);
     }
 
-    uv += 0.5;
+    uv += screenSize / 2;
 
     bool invert = invertF > 0.5;
 
-    float4 col = src.Sample(smpl, uv);
+    float4 col = src[uv];
     float a = 1.0;
     if (invert)
     {
@@ -78,15 +80,13 @@ local alpha = 1 - _alpha / 100
 
 local id = _id ~= "" and _id or obj.id
 local cache = "cache:dkdm_" .. id
-local cache_fg = cache .. "_fg"
-local cache_bg = cache .. "_bg"
 
 dkdm = dkdm or {}
 dkdm[id] = dkdm[id] or {}
 
 local is_filter = obj.getinfo("filter")
 
-local flattern = obj.getoption("multi_object")
+local multi_object = obj.getoption("multi_object")
 
 local is_last = obj.index == obj.num - 1
 
@@ -94,34 +94,28 @@ if is_filter or obj.index == 0 then
     obj.clearbuffer(cache, obj.screen_w, obj.screen_h)
 end
 
-local target = is_filter and "object" or flattern and "tempbuffer" or "framebuffer"
+local target = is_filter and "object" or multi_object and "tempbuffer" or "framebuffer"
 
 local zoom = obj.getvalue("zoom") / 100
-local aspect = (flattern and not is_filter) and obj.getvalue("aspect") or 0
+local alpha = obj.getvalue("alpha")
+local aspect = not is_filter and obj.getvalue("aspect") or 0
 
 local is_in = 1 - io
 local x = 0
 local y = 0
 local z = 0
 
-obj.copybuffer(cache_bg, "framebuffer")
+x = obj.ox + obj.x
+y = obj.oy + obj.y
+z = obj.oz + obj.z
 
 if not is_filter then
-    if obj.index == 0 then
-        obj.setoption("drawtarget", target, obj.screen_w, obj.screen_h)
-    end
-    if flattern then
-        local zoom = obj.getvalue("zoom") / 100
-        x = obj.ox + is_in * obj.x
-        y = obj.oy + is_in * obj.y
-        z = obj.oz + is_in * obj.z
-        local rx = obj.rx + obj.getvalue("rx")
-        local ry = obj.ry + obj.getvalue("ry")
-        local rz = obj.rx + obj.getvalue("rz")
-        obj.setoption("drawtarget", target)
-        obj.draw(0, 0, z, zoom, obj.alpha, rx, ry, rz)
-    else
-        obj.draw()
+    local rx = obj.rx + obj.getvalue("rx")
+    local ry = obj.ry + obj.getvalue("ry")
+    local rz = obj.rx + obj.getvalue("rz")
+    if io == 0 then
+        obj.setoption("drawtarget", "tempbuffer", obj.screen_w, obj.screen_h)
+        obj.draw(0, 0, z, zoom, alpha, rx, ry, rz)
     end
 end
 
@@ -133,11 +127,12 @@ if src ~= "" and dst ~= "" then
         {
             alpha,
             invert,
-            aspect,
+            0,
             obj.screen_w,
             obj.screen_h,
-            x,
-            y
+            1,
+            0,
+            0
         },
         blend
     )
@@ -145,16 +140,17 @@ elseif io == 1 and dkdm and dkdm[id] and dkdm[id].data then
     obj.putpixeldata(cache, dkdm[id].data, dkdm[id].w, dkdm[id].h)
     obj.pixelshader(
         "psmain",
-        target,
+        "object",
         cache,
         {
             alpha,
             invert,
-            aspect,
+            0,
             obj.screen_w,
             obj.screen_h,
-            x,
-            y
+            zoom,
+            (obj.w - obj.screen_w) / 2,
+            (obj.h - obj.screen_h) / 2
         },
         blend
     )
@@ -162,13 +158,14 @@ elseif dkdm and dkdm[id] then
     obj.pixelshader(
         "psmain",
         cache,
-        target,
+        "tempbuffer",
         {
             alpha,
             invert,
             aspect,
             obj.screen_w,
             obj.screen_h,
+            1,
             x,
             y
         },
@@ -176,42 +173,16 @@ elseif dkdm and dkdm[id] then
     )
     dkdm[id].data, dkdm[id].w, dkdm[id].h = obj.getpixeldata(cache)
     if clear then
-        obj.clearbuffer(target)
-    end
-end
-
-if not is_filter then
-    obj.load(target)
-    if not flattern then
-        obj.copybuffer(cache_fg, target)
-        obj.copybuffer(target, cache_bg)
-        obj.pixelshader(
-            "psmain",
-            target,
-            cache_fg,
-            {
-                1,
-                0,
-                0,
-                obj.screen_w,
-                obj.screen_h,
-                0,
-                0
-            },
-            "draw"
-        )
-    end
-    if io == 0 then
-        obj.ox = obj.ox - is_in * obj.x
-        obj.oy = obj.oy - is_in * obj.y
-        obj.oz = obj.oz - is_in * obj.z
-        obj.zoom = 1 / zoom
-    end
-    if is_last then
+        if multi_object then
+            obj.clearbuffer("framebuffer")
+        else
+            obj.clearbuffer("object")
+        end
     end
 end
 
 obj.effect()
+
 @遅延
 --filter
 --label:どこでもバッファ
