@@ -4,8 +4,9 @@
 --string@_id:ID,
 --select@io:動作モード,入力=0,出力=1
 --track@_alpha:透明度,0.0,100.0,0.0,0.01
---select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
---group:debug
+--select@bmode:合成モード,通常=1,置換=2,加算=3,マスク=4,型抜き=5
+--check@clear:背景クリア,false
+--group:debug,false
 --string@src:src,
 --string@dst:dst,
 
@@ -15,31 +16,59 @@ Texture2D src : register(t0);
 cbuffer constant : register(b0)
 {
     float alpha;
+    float invertF;
 }
 
 float4 psmain (float4 pos : SV_Position) : SV_Target
 {
-    return src[pos.xy] * float4(1.0, 1.0, 1.0, 1 - alpha);
+    bool invert = invertF > 0.5;
+    float4 col = src[pos.xy];
+    float a = 1.0;
+    if (invert)
+    {
+        a -= col.a;
+    }
+    else
+    {
+        a *= col.a;
+    }
+    return float4(col.rgb, a * alpha);
 }
 ]]
 
 local blends = {
     "draw",
-    "mask",
     "copy",
-    "add"
+    "add",
+    "mask",
+    "mask"
 }
 
 local blend = blends[bmode]
 
-local alpha = _alpha / 100
+local invert = bmode == 5 and 1 or 0
+
+local alpha = 1 - _alpha / 100
 
 local id = _id ~= "" and _id or obj.id
 local cache = "cache:dkdm_" .. id
+local cache_bg = cache .. "_bg"
 obj.clearbuffer(cache, obj.screen_w, obj.screen_h)
 
 dkdm = dkdm or {}
 dkdm[id] = dkdm[id] or {}
+
+local is_filter = obj.getinfo("filter")
+
+local target = is_filter and "object" or "framebuffer"
+
+obj.copybuffer(cache_bg, target)
+
+if not is_filter then
+    obj.clearbuffer(target)
+    obj.draw()
+    obj.effect("オフスクリーン描画")
+end
 
 if src ~= "" and dst ~= "" then
     obj.pixelshader(
@@ -47,7 +76,8 @@ if src ~= "" and dst ~= "" then
         dst,
         src,
         {
-            alpha
+            alpha,
+            invert
         },
         blend
     )
@@ -55,10 +85,11 @@ elseif io == 1 and dkdm and dkdm[id] and dkdm[id].data then
     obj.putpixeldata(cache, dkdm[id].data, dkdm[id].w, dkdm[id].h)
     obj.pixelshader(
         "psmain",
-        "object",
+        target,
         cache,
         {
-            alpha
+            alpha,
+            invert
         },
         blend
     )
@@ -66,13 +97,32 @@ elseif dkdm and dkdm[id] then
     obj.pixelshader(
         "psmain",
         cache,
-        "object",
+        target,
         {
-            alpha
+            alpha,
+            invert
         },
         blend
     )
     dkdm[id].data, dkdm[id].w, dkdm[id].h = obj.getpixeldata(cache)
+    if clear then
+        obj.clearbuffer(target)
+    end
+end
+
+if not is_filter then
+    obj.copybuffer("tempbuffer", target)
+    obj.copybuffer(target, cache_bg)
+    obj.pixelshader(
+        "psmain",
+        target,
+        "tempbuffer",
+        {
+            1.0,
+            0
+        },
+        "draw"
+    )
 end
 
 @遅延
@@ -80,14 +130,16 @@ end
 --label:どこでもバッファ
 --track@num_frames:遅延,1,600,1,1
 --track@alpha:透明度,0.0,100.0,0.0,0.01
---select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
+--select@bmode:合成モード,通常=1,置換=2,加算=3,マスク=4,型抜き=5
+--group:debug,false
 --string@id:ID,
 
 local blends = {
     "draw",
-    "mask",
     "copy",
-    "add"
+    "add",
+    "mask",
+    "mask"
 }
 
 local blend = blends[bmode]
@@ -130,13 +182,14 @@ obj.effect("入出力@どこでもバッファ", "ID", "", "合成モード", bl
 --track@interval:遅延,1,600,1,1
 --track@alpha:透明度,0.0,100.0,0.0,0.01
 --track@count:残像数,1,100,1,1
---select@bmode:合成モード,通常=1,マスク=2,置換=3,加算=4
+--select@bmode:合成モード,通常=1,置換=2,加算=3,マスク=4,型抜き=5
 
 local blends = {
     "draw",
-    "mask",
     "copy",
-    "add"
+    "add",
+    "mask",
+    "mask"
 }
 
 local blend = blends[bmode]
@@ -148,3 +201,113 @@ for i = count, 1, -1 do
 end
 
 obj.effect("入出力@どこでもバッファ", "ID", "", "合成モード", blend, "透明度", alpha, "src", "tempbuffer", "dst", "object")
+
+@ディスプレイスメント
+--[[pixelshader@psmain:
+float2 rotateUV(float2 uv, float rot)
+{
+    float2x2 m = float2x2(cos(rot), -sin(rot), sin(rot), cos(rot));
+    return mul(m, uv);
+}
+
+struct PS_INPUT {
+  float4 pos : SV_Position;
+  float2 uv : TEXCOORD0;
+};
+
+cbuffer constant : register(b0)
+{
+    float2 size;
+    float2 move;
+    float scale;
+    float rotate;
+    float chab;
+    float chabModeF;
+}
+
+float2 calcUV(float2 uv, float2 size, float2 move, float scale, float rotate, float disp)
+{
+    return uv = (rotateUV((uv - 0.5) * size, radians(rotate * disp)) + move * disp) * exp(disp * log(scale)) / size + 0.5;
+}
+
+SamplerState smpl : register(s0);
+
+Texture2D src : register(t0);
+Texture2D disp : register(t1);
+
+float4 psmain(PS_INPUT input) : SV_Target
+{    
+    float4 dispCol = disp.Sample(smpl, input.uv);
+
+    float2 uv_r = calcUV(input.uv, size, move, scale, rotate, dispCol.r / (chab * chab));
+    float2 uv_g = calcUV(input.uv, size, move, scale, rotate, dispCol.g);
+    float2 uv_b = calcUV(input.uv, size, move, scale, rotate, dispCol.b * chab * chab);
+
+    float2 uv_c = calcUV(input.uv, size, move, scale, rotate, 0.5 * (dispCol.g + dispCol.b) * chab);
+    float2 uv_o = calcUV(input.uv, size, move, scale, rotate, 0.5 * (dispCol.r + dispCol.g) / chab);
+
+    float2 ra = src.Sample(smpl, uv_r).ra;
+    float2 ga = src.Sample(smpl, uv_g).ga;
+    float2 ba = src.Sample(smpl, uv_b).ba;
+
+    float3 oa = src.Sample(smpl, uv_o).rga;
+    float3 ca = src.Sample(smpl, uv_c).gba;
+    
+    if (chabModeF > 0.5) {
+        float r = (ra.x + oa.x) / 2;
+        float g = (oa.y + ga.x + ca.x) / 3;
+        float b = (ca.y + ba.x) / 2;
+        float a = (ra.y + oa.z + ga.y + ca.z + ba.y) / 5.0;
+
+        return float4(r, g, b, a);
+    }
+    else
+    {
+        float a = (ra.y + ga.y + ba.y) / 3.0;
+
+        return float4(ra.x, ga.x, ba.x, a);
+    }
+}
+]]
+
+--filter
+--label:どこでもバッファ
+--string@id:ID,
+--track@dx:移動X,-5000,5000,0,0.1
+--track@dy:移動Y,-5000,5000,0,0.1
+--track@ds:拡大,-100,100,0,0.1
+--track@rot:回転,-3600,3600,0,0.1
+--group:色収差
+--track@chab_amount:強度,-100,100,0,0.1
+--select@chab_mode:精度,３段階=0,５段階=1
+--group:
+--check@clear:背景クリア,false
+
+local scale = math.exp(-10 * ds / 100)
+
+dkdm = dkdm or {}
+dkdm[id] = dkdm[id] or {}
+
+if dkdm[id].data then
+    obj.putpixeldata("tempbuffer", dkdm[id].data, dkdm[id].w, dkdm[id].h)
+    obj.pixelshader(
+        "psmain",
+        "object",
+        {
+            "object", 
+            "tempbuffer"
+        },
+        {
+            obj.screen_w,
+            obj.screen_h,
+            dx,
+            dy,
+            scale,
+            -rot,
+            math.exp(-1 * chab_amount / 1000),
+            chab_mode,
+        },
+        clear and "copy" or "draw",
+        "clip"
+    )
+end
