@@ -4,7 +4,7 @@
 
 ![](https://aviutl2-catalog-badge.sevenc7c.workers.dev/badge/v/zopty.DokodemoBuffer)
 
-レイヤー間で映像を送受信できるカスタムオブジェクトを追加します
+レイヤー間で映像を送受信できるフィルタなどを追加します
 
 beta33にて動作確認済
 
