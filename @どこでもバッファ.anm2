@@ -158,7 +158,7 @@ elseif dkdm and dkdm[id] then
     obj.pixelshader(
         "psmain",
         cache,
-        "tempbuffer",
+        is_filter and "object" or "tempbuffer",
         {
             alpha,
             invert,
@@ -175,9 +175,8 @@ elseif dkdm and dkdm[id] then
     if clear then
         if multi_object then
             obj.clearbuffer("framebuffer")
-        else
-            obj.clearbuffer("object")
         end
+        obj.clearbuffer("object")
     end
 end
 
