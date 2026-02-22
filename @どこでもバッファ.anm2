@@ -33,7 +33,9 @@ float4 psmain (float4 pos : SV_Position) : SV_Target
 
     float2 uv = pos.xy - float2(ox, oy);
 
-    uv -= screenSize / 2;
+    uv /= screenSize;
+
+    uv -= 0.5;
 
     uv *= scale;
 
@@ -46,11 +48,11 @@ float4 psmain (float4 pos : SV_Position) : SV_Target
         uv /= float2(1.0, 1.0 + aspect);
     }
 
-    uv += screenSize / 2;
+    uv += 0.5;
 
     bool invert = invertF > 0.5;
 
-    float4 col = src[uv];
+    float4 col = src.Sample(smpl, uv);
     float a = 1.0;
     if (invert)
     {
@@ -97,7 +99,6 @@ end
 local target = is_filter and "object" or multi_object and "tempbuffer" or "framebuffer"
 
 local zoom = obj.getvalue("zoom") / 100
-local alpha = obj.getvalue("alpha")
 local aspect = not is_filter and obj.getvalue("aspect") or 0
 
 local is_in = 1 - io
@@ -109,13 +110,18 @@ x = obj.ox + obj.x
 y = obj.oy + obj.y
 z = obj.oz + obj.z
 
+local extend = is_filter and 1 or 2
+local w = obj.screen_w * extend
+local h = obj.screen_h * extend
+
 if not is_filter then
     local rx = obj.rx + obj.getvalue("rx")
     local ry = obj.ry + obj.getvalue("ry")
     local rz = obj.rx + obj.getvalue("rz")
+    local obj_alpha = obj.getvalue("alpha")
     if io == 0 then
-        obj.setoption("drawtarget", "tempbuffer", obj.screen_w, obj.screen_h)
-        obj.draw(0, 0, z, zoom, alpha, rx, ry, rz)
+        obj.setoption("drawtarget", "tempbuffer", w, h)
+        obj.draw(0, 0, z, 1, obj_alpha, rx, ry, rz)
     end
 end
 
@@ -148,7 +154,7 @@ elseif io == 1 and dkdm and dkdm[id] and dkdm[id].data then
             0,
             obj.screen_w,
             obj.screen_h,
-            zoom,
+            1,
             (obj.w - obj.screen_w) / 2,
             (obj.h - obj.screen_h) / 2
         },
@@ -163,11 +169,11 @@ elseif dkdm and dkdm[id] then
             alpha,
             invert,
             aspect,
-            obj.screen_w,
-            obj.screen_h,
-            1,
-            x,
-            y
+            w,
+            h,
+            1 / zoom,
+            x + (obj.screen_w - w) / 2,
+            y + (obj.screen_h - h) / 2
         },
         blend
     )
@@ -179,8 +185,6 @@ elseif dkdm and dkdm[id] then
         obj.clearbuffer("object")
     end
 end
-
-obj.effect()
 
 @遅延
 --filter
@@ -276,7 +280,7 @@ cbuffer constant : register(b0)
 {
     float2 size;
     float2 move;
-    float scale;
+    float uvScale;
     float rotate;
     float chab;
     float chabModeF;
@@ -296,12 +300,12 @@ float4 psmain(PS_INPUT input) : SV_Target
 {    
     float4 dispCol = disp.Sample(smpl, input.uv);
 
-    float2 uv_r = calcUV(input.uv, size, move, scale, rotate, dispCol.r / (chab * chab));
-    float2 uv_g = calcUV(input.uv, size, move, scale, rotate, dispCol.g);
-    float2 uv_b = calcUV(input.uv, size, move, scale, rotate, dispCol.b * chab * chab);
+    float2 uv_r = calcUV(input.uv, size, move, uvScale, rotate, dispCol.r / (chab * chab));
+    float2 uv_g = calcUV(input.uv, size, move, uvScale, rotate, dispCol.g);
+    float2 uv_b = calcUV(input.uv, size, move, uvScale, rotate, dispCol.b * chab * chab);
 
-    float2 uv_c = calcUV(input.uv, size, move, scale, rotate, 0.5 * (dispCol.g + dispCol.b) * chab);
-    float2 uv_o = calcUV(input.uv, size, move, scale, rotate, 0.5 * (dispCol.r + dispCol.g) / chab);
+    float2 uv_c = calcUV(input.uv, size, move, uvScale, rotate, 0.5 * (dispCol.g + dispCol.b) * chab);
+    float2 uv_o = calcUV(input.uv, size, move, uvScale, rotate, 0.5 * (dispCol.r + dispCol.g) / chab);
 
     float2 ra = src.Sample(smpl, uv_r).ra;
     float2 ga = src.Sample(smpl, uv_g).ga;
@@ -362,7 +366,7 @@ if dkdm[id].data then
             scale,
             -rot,
             math.exp(-1 * chab_amount / 1000),
-            chab_mode,
+            chab_mode
         },
         clear and "copy" or "draw",
         "clip"
